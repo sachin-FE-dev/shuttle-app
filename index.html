@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metropolis Shuttle</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-container">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-bus">
+                        <path d="M8 6v6"></path>
+                        <path d="M15 6v6"></path>
+                        <path d="M2 12h19.6"></path>
+                        <path
+                            d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3">
+                        </path>
+                        <circle cx="7" cy="18" r="2"></circle>
+                        <path d="M9 18h5"></path>
+                        <circle cx="16" cy="18" r="2"></circle>
+                    </svg>
+                </div>
+                <h1>Metropolis Shuttle</h1>
+            </div>
+            <button id="mobile-menu-toggle" class="mobile-menu-btn">
+                <span>☰</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="grid">
+            <!-- Sidebar -->
+            <div id="sidebar" class="sidebar">
+                <h2>Transit Routes</h2>
+                <div class="route-buttons">
+                    <button id="view-all-routes" class="route-btn">
+                        <div class="view-all-icon">
+                            <span>📍</span>
+                        </div>
+                        <span>View All Routes</span>
+                    </button>
+                    <div class="divider"></div>
+                    <!-- Route buttons will be added dynamically -->
+                </div>
+            </div>
+
+            <!-- Main Panel -->
+            <div class="main-panel">
+                <!-- Map Container -->
+                <div class="map-container">
+                    <div id="map"></div>
+                </div>
+
+                <div id="route-info" class="route-info">
+                    <div class="route-header">
+                        <div id="route-color" class="route-color" style="background-color: #ef4444;"></div>
+                        <h2 id="route-name">North Express</h2>
+                    </div>
+
+                    <!-- Stops -->
+                    <div>
+                        <h3 class="section-title">
+                            <span>📍</span> Route Stops
+                        </h3>
+                        <div id="stops-list" class="stops-list">
+                            <!-- Stops will be added dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Schedule -->
+                    <div>
+                        <!-- <h3 class="section-title">
+                            <span>🕒</span> Today's Schedule
+                        </h3> -->
+                        <div id="schedule-grid" class="schedule-grid">
+                            <!-- Schedule times will be added dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script>
+        let socket = null;
+        
+        // Route colors for the map
+        const routeColors = [
+            '#ef4444', // red
+            '#3b82f6', // blue
+            '#22c55e', // green
+            '#f59e0b', // amber
+            '#8b5cf6', // purple
+        ];
+
+        let routes = []
+        const mobileMenuToggle = document.getElementById('mobile-menu-toggle');
+        const sidebar = document.getElementById('sidebar');
+        const routeInfoDiv = document.getElementById('route-info');
+        const routeNameEl = document.getElementById('route-name');
+        const stopsListEl = document.getElementById('stops-list');
+        const routeButtonsContainer = document.querySelector('.route-buttons');
+        const viewAllRoutesBtn = document.getElementById('view-all-routes');
+
+        // State
+        let selectedRoute = []
+        let showAllRoutes = false;
+        let map = null; // Initialize as null
+        let markers = [], routeLines = [];
+        let busMarkers = {};
+
+        // WebSocket connection
+        function initSocketConnection() {
+  // Create WebSocket connection
+  socket = new WebSocket('wss://c395-14-143-126-241.ngrok-free.app');
+  
+  // Connection opened
+  socket.addEventListener('open', (event) => {
+    console.log('WebSocket connection established');
+  });
+  
+  // Listen for messages
+  socket.addEventListener('message', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      console.log('Received data:', data);
+      
+      // Before updating, clear existing bus markers to prevent duplicates
+      clearBusMarkers();
+      
+      // Process valid location data
+      if (data.lat !== undefined && data.lng !== undefined) {
+        updateBusPosition(data);
+      }
+    } catch (error) {
+      console.error('Error processing WebSocket message:', error);
+    }
+  });
+  
+  // Connection closed
+  socket.addEventListener('close', (event) => {
+    console.log('WebSocket connection closed, attempting to reconnect in 5 seconds');
+    setTimeout(initSocketConnection, 5000);
+  });
+  
+  // Connection error
+  socket.addEventListener('error', (event) => {
+    console.error('WebSocket error:', event);
+  });
+}
+
+
+function clearBusMarkers() {
+  Object.values(busMarkers).forEach(marker => {
+    if (map && marker) map.removeLayer(marker);
+  });
+  busMarkers = {};
+}
+
+        
+        // Update bus position based on WebSocket data
+        function updateBusPosition(data) {
+  console.log('Updating bus position with data:', data);
+  
+  // Make sure latitude and longitude are numbers
+  const lat = parseFloat(data.lat);
+  const lng = parseFloat(data.lng);
+  
+  // Verify we have valid coordinates
+  if (isNaN(lat) || isNaN(lng)) {
+    console.error('Invalid coordinates:', data);
+    return;
+  }
+  
+  // Define position array in the format Leaflet expects [lat, lng]
+  const position = [lat, lng];
+  console.log('Setting bus position to:', position);
+  
+  // Get route ID and color information from the data
+  const routeId = data.routeId || 'default';
+  let routeColor = '#22c55e'; // Default green color
+  
+  // Find the matching route in our data if possible
+  const route = routes.find(r => r.id === routeId);
+  if (route && route.color) {
+    routeColor = route.color;
+  }
+  
+  // Create the bus marker
+  const busMarker = L.marker(position, {
+    icon: createBusIcon(selectedRoute.color)
+  }).addTo(map);
+  
+  // Set popup content
+  let popupContent = `
+    <div class="popup-title">Live Shuttle Bus</div>
+    <div class="popup-subtitle">Real-time location tracking</div>
+    <div>Last update: ${new Date().toLocaleTimeString()}</div>
+  `;
+  
+  // If we know the route, enhance the popup content
+  if (route) {
+    // Find the closest stop
+    const closestStop = findClosestStop(position, route.stops);
+    popupContent = `
+      <div class="popup-title">${route.name} Bus</div>
+      <div class="popup-subtitle">Near: ${closestStop.name}</div>
+      <div>Last update: ${new Date().toLocaleTimeString()}</div>
+    `;
+  }
+  
+  busMarker.bindPopup(popupContent);
+  
+  // Store the marker in our tracking object
+  busMarkers[routeId] = busMarker;
+}
+        
+        // Helper function to find the closest stop to the current bus position
+        function findClosestStop(position, stops) {
+          let closestStop = stops[0];
+          let shortestDistance = calculateDistance(position, stops[0].coords);
+          
+          stops.forEach(stop => {
+            const distance = calculateDistance(position, stop.coords);
+            if (distance < shortestDistance) {
+              shortestDistance = distance;
+              closestStop = stop;
+            }
+          });
+          
+          return closestStop;
+        }
+        
+        // Calculate distance between two coordinates using Haversine formula
+        function calculateDistance(coord1, coord2) {
+          const R = 6371e3; // Earth's radius in meters
+          const φ1 = coord1[0] * Math.PI / 180;
+          const φ2 = coord2[0] * Math.PI / 180;
+          const Δφ = (coord2[0] - coord1[0]) * Math.PI / 180;
+          const Δλ = (coord2[1] - coord1[1]) * Math.PI / 180;
+        
+          const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                   Math.cos(φ1) * Math.cos(φ2) *
+                   Math.sin(Δλ/2) * Math.sin(Δλ/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          
+          return R * c; // Distance in meters
+        }
+
+        // Toggle mobile menu
+        mobileMenuToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            const icon = mobileMenuToggle.querySelector('span');
+            icon.textContent = icon.textContent === '☰' ? '✕' : '☰';
+        });
+
+
+        async function fetchRoutes() {
+            try {
+                const headers = {
+                    'bypass-tunnel-reminder': 'true',
+                    'User-Agent': 'custom-shuttle-app-client'
+                };
+                const response = await fetch('https://mt-shuttle.loca.lt/shuttle-stops', {
+                    headers: headers
+                });
+                const result = await response.json();
+
+                if (result.success && Array.isArray(result.data)) {
+                    routes = result.data
+                    selectedRoute = routes[0];
+                    
+
+                } else {
+                    console.error('Invalid API response format');
+                }
+            } catch (error) {
+                console.error('Error fetching routes:', error);
+            }
+        }
+
+        // Initialize map
+        function initMap() {
+            // Check if map already exists
+            if (map !== null) {
+                map.remove(); // Properly remove the existing map
+            }
+
+            // Create map
+            map = L.map('map').setView(selectedRoute.stops[0].coords, 14);
+
+            // Add tile layer
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Render initial route
+            renderRouteOnMap(selectedRoute);
+        }
+
+        // Custom stop icon with visible marker symbol
+        const stopIcon = L.divIcon({
+            className: 'custom-stop-icon',
+            html: `<div style="
+                background-color: white;
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                border: 3px solid #1a4f8a;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                color: #1a4f8a;
+                font-weight: bold;
+            ">⊙</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+        });
+
+        // Create bus icon with enhanced styling
+        function createBusIcon(color) {
+            return L.divIcon({
+                className: 'custom-bus-icon',
+                html: `<div style="
+                    background-color: ${color};
+                    color: white;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 2px solid white;
+                    box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+                    font-size: 18px;
+                    position: relative;
+                ">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 6v6"></path>
+                        <path d="M15 6v6"></path>
+                        <path d="M2 12h19.6"></path>
+                        <path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"></path>
+                        <circle cx="7" cy="18" r="2"></circle>
+                        <path d="M9 18h5"></path>
+                        <circle cx="16" cy="18" r="2"></circle>
+                    </svg>
+                </div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+            });
+        }
+
+        // Clear all map layers
+        function clearMapLayers() {
+            // Clear markers
+            markers.forEach(marker => {
+                if (map && marker) map.removeLayer(marker);
+            });
+            markers = [];
+
+            // Clear route lines
+            routeLines.forEach(line => {
+                if (map && line) map.removeLayer(line);
+            });
+            routeLines = [];
+
+            // Clear bus markers
+            Object.values(busMarkers).forEach(marker => {
+                if (map && marker) map.removeLayer(marker);
+            });
+            busMarkers = {};
+        }
+
+        // Create bus for a route
+        function createBusForRoute(route) {
+          // We'll create an initial marker at the first stop
+          // It will be updated by WebSocket data when it arrives
+          const startPosition = route.stops[0].coords;
+          const routeId = route.id || routes.indexOf(route);
+          
+          // If we don't have this bus yet, create it
+          if (!busMarkers[routeId]) {
+            const busMarker = L.marker(startPosition, {
+              icon: createBusIcon(route.color)
+            }).addTo(map);
+            
+            busMarker.bindPopup(`
+              <div class="popup-title">${route.name} Bus</div>
+              <div class="popup-subtitle">Waiting for real-time updates...</div>
+            `);
+            
+            // Store the marker
+            busMarkers[routeId] = busMarker;
+          }
+        }
+
+        // Render route on map
+        function renderRouteOnMap(route) {
+            clearMapLayers();
+
+            // Add stops markers
+            route.stops.forEach((stop, index) => {
+                if(stop.name !== '') {
+                    const marker = L.marker(stop.coords, { icon: stopIcon }).addTo(map);
+                    marker.bindPopup(`
+                        <div class="popup-title">${stop.name}</div>
+                        <div class="popup-subtitle">${route.name}</div>
+                    `);
+                    markers.push(marker);
+                }
+            });
+
+            // Add route line
+            const routeCoords = route.stops.map(stop => stop.coords);
+            const routeLine = L.polyline(routeCoords, {
+                color: route.color,
+                weight: 3,
+                opacity: 0.7
+            }).addTo(map);
+            routeLines.push(routeLine);
+
+            // Add initial bus marker that will be updated by WebSocket
+            createBusForRoute(route);
+        }
+
+        // Render all routes on map
+        function renderAllRoutes() {
+            clearMapLayers();
+
+            routes.forEach(route => {
+                // Add stops markers
+                route.stops.forEach((stop, index) => {
+                    if(stop.name !== '') {
+                        const marker = L.marker(stop.coords, { icon: stopIcon }).addTo(map);
+                        marker.bindPopup(`
+                            <div class="popup-title">${stop.name}</div>
+                            <div class="popup-subtitle">${route.name}</div>
+                        `);
+                        markers.push(marker);
+                    }
+                });
+
+                // Add route line
+                const routeCoords = route.stops.map(stop => stop.coords);
+                const routeLine = L.polyline(routeCoords, {
+                    color: route.color,
+                    weight: 3,
+                    opacity: 0.7
+                }).addTo(map);
+                routeLines.push(routeLine);
+
+                // Add bus marker
+                createBusForRoute(route);
+            });
+
+            // Fit map to show all routes
+            const allCoords = routes.flatMap(route => route.stops.map(stop => stop.coords));
+            const bounds = L.latLngBounds(allCoords);
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+
+        // Update route info panel
+        function updateRouteInfo(route) {
+            // Update route name and color
+            routeNameEl.textContent = route.name;
+            const routeColorEl = document.getElementById('route-color');
+            routeColorEl.style.backgroundColor = route.color;
+
+            // Update stops list
+            stopsListEl.innerHTML = '';
+            route.stops.forEach((stop, index) => {
+                if(stop.name!=''){
+                const stopItem = document.createElement('div');
+                stopItem.className = 'stop-item';
+                stopItem.innerHTML = `
+                    <div class="stop-number">${index + 1}</div>
+                    <span class="stop-name">${stop.name}</span>
+                `;
+                stopsListEl.appendChild(stopItem);
+                }
+            });
+        }
+
+        // Create route buttons
+        function createRouteButtons() {
+            routes.forEach(route => {
+                const button = document.createElement('button');
+                button.className = 'route-btn';
+                button.innerHTML = `
+                    <div class="route-color" style="background-color: ${route.color}"></div>
+                    <span>${route.name}</span>
+                `;
+
+                button.addEventListener('click', () => {
+                    selectedRoute = route;
+                    showAllRoutes = false;
+
+                    updateActiveButton();
+                    updateRouteInfo(route);
+                    setSideBySideLayout();
+
+                    // Update map
+                    renderRouteOnMap(route);
+                    map.setView(route.stops[0].coords, 14);
+
+                    // Close mobile menu if open
+                    if (window.innerWidth <= 768) {
+                        sidebar.classList.remove('open');
+                        const icon = mobileMenuToggle.querySelector('span');
+                        icon.textContent = '☰';
+                    }
+                });
+
+                routeButtonsContainer.appendChild(button);
+            });
+
+            // Add event listener to view all routes button
+            viewAllRoutesBtn.addEventListener('click', () => {
+                showAllRoutes = true;
+
+                // Update UI
+                updateActiveButton();
+                setFullWidthMapLayout();
+
+                // Update map
+                renderAllRoutes();
+
+                // Close mobile menu if open
+                if (window.innerWidth <= 768) {
+                    sidebar.classList.remove('open');
+                    const icon = mobileMenuToggle.querySelector('span');
+                    icon.textContent = '☰';
+                }
+            });
+        }
+
+        // Update active button
+        function updateActiveButton() {
+            const routeBtns = document.querySelectorAll('.route-btn');
+
+            routeBtns.forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            if (showAllRoutes) {
+                viewAllRoutesBtn.classList.add('active');
+            } else {
+                const routeName = selectedRoute.name;
+                const routeBtn = Array.from(routeBtns).find(btn =>
+                    btn.textContent.trim() === routeName
+                );
+
+                if (routeBtn) {
+                    routeBtn.classList.add('active');
+                }
+            }
+        }
+
+        // Layout helper functions
+        function setFullWidthMapLayout() {
+            document.querySelector('.map-container').classList.add('full-width');
+            document.getElementById('route-info').style.display = 'none';
+        }
+
+        function setSideBySideLayout() {
+            document.querySelector('.map-container').classList.remove('full-width');
+            document.getElementById('route-info').style.display = 'block';
+        }
+
+        // Initialize
+        async function init() {
+            initSocketConnection();
+            // Create
+            await fetchRoutes();
+            console.log(selectedRoute);
+            createRouteButtons();
+            if (!map) {
+                initMap();
+            }
+
+            // Update route info with default route
+            updateRouteInfo(selectedRoute);
+
+            // Update active button
+            updateActiveButton();
+
+            // Apply initial layout
+            setSideBySideLayout();
+
+            // Add event listener to view all routes button
+            viewAllRoutesBtn.addEventListener('click', () => {
+                showAllRoutes = true;
+                updateActiveButton();
+                setFullWidthMapLayout();
+                renderAllRoutes();
+
+                if (window.innerWidth <= 768) {
+                    sidebar.classList.remove('open');
+                    const icon = mobileMenuToggle.querySelector('span');
+                    icon.textContent = '☰';
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 768) {
+                    sidebar.classList.remove('open');
+                    const icon = mobileMenuToggle.querySelector('span');
+                    icon.textContent = '☰';
+                }
+            });
+
+            window.addEventListener('beforeunload', () => {
+                // Nothing to clean up with the new WebSocket approach
+                // We're not using any intervals that need to be cleared
+                if (socket) {
+                    socket.close();
+                }
+            });
+        }
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+
+</html>
