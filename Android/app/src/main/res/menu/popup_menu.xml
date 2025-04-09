@@ -1,0 +1,9 @@
+<!-- res/menu/popup_menu.xml -->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+<!--    <item-->
+<!--        android:id="@+id/simulate"-->
+<!--        android:title="Simulate Data" />-->
+    <item
+        android:id="@+id/logout"
+        android:title="Logout" />
+</menu>
