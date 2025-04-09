@@ -1,11 +1,15 @@
 const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 8080 });
+
+const wss = new WebSocket.Server({ port: 8080, host: '0.0.0.0' });
+
 wss.on('connection', (ws) => {
-    console.log(":white_check_mark: Client connected");
-    // Send a welcome message
+    console.log("Client connected");
+
     ws.send(JSON.stringify({ message: "Welcome to GPS WebSocket Server!" }));
+
     ws.on('message', (data) => {
-        console.log(":round_pushpin: Received GPS Data:", data.toString());
+        console.log("Received GPS Data:", data.toString());
+
         // Broadcast GPS data to all connected clients
         wss.clients.forEach(client => {
             if (client !== ws && client.readyState === WebSocket.OPEN) {
@@ -13,6 +17,8 @@ wss.on('connection', (ws) => {
             }
         });
     });
-    ws.on('close', () => console.log(":red_circle: Client disconnected"));
+
+    ws.on('close', () => console.log("Client disconnected"));
 });
-console.log(":rocket: WebSocket Server running on ws://localhost:8080");
+
+console.log("WebSocket Server running on ws://localhost:8080");
